@@ -1,0 +1,7 @@
+flask
+streamlit
+pandas
+requests
+folium
+streamlit-folium
+gunicorn
