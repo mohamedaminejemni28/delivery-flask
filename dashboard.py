@@ -4,10 +4,16 @@ import requests
 import folium
 from streamlit_folium import st_folium
 
-API_URL = "http://127.0.0.1:5000/clients"
-DELIVER_URL = "http://127.0.0.1:5000/deliver"
-DELETE_URL = "http://127.0.0.1:5000/delete_client"
-MESSAGES_API = "http://127.0.0.1:5000/messages"
+#API_URL = "http://127.0.0.1:5000/clients"
+#DELIVER_URL = "http://127.0.0.1:5000/deliver"
+#DELETE_URL = "http://127.0.0.1:5000/delete_client"
+#MESSAGES_API = "http://127.0.0.1:5000/messages"
+
+
+API_URL = "https://delivery-flask-izwm.onrender.com/clients"
+DELIVER_URL = "https://delivery-flask-izwm.onrender.com/deliver"
+DELETE_URL = "https://delivery-flask-izwm.onrender.com/delete_client"
+MESSAGES_API = "https://delivery-flask-izwm.onrender.com/messages"
 
 st.set_page_config(page_title="Delivery Control Panel", layout="wide")
 st.title("🚚 Intelligent Delivery Dashboard")
