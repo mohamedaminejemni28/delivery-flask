@@ -126,8 +126,13 @@ def delete_client():
 # ----------------------
 @app.route("/sms", methods=["POST"])
 def receive_sms():
-    data = request.form.to_dict()
-    print("RAW DATA:", data)
+    # Read JSON or form
+    if request.is_json:
+        data = request.get_json()
+    else:
+        data = request.form.to_dict()
+
+    print("RAW DATA:", data)  # Logs everything for debugging
 
     phone = ""
     name = ""
@@ -137,32 +142,24 @@ def receive_sms():
     # --- CASE 1: custom "key" format ---
     if "key" in data:
         raw_text = data.get("key", "").strip()
-
-        # Tenter d'extraire le phone
         phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
         phone = phone_match.group(1) if phone_match else "TEST_PHONE"
-
-        # Tenter d'extraire le nom
         name_match = re.search(r"\((.*?)\)", raw_text)
         name = name_match.group(1).strip() if name_match else "TEST_NAME"
-
-        # Tenter d'extraire le corps du message
         body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
         body = body_match.group(1).strip() if body_match else raw_text
 
-    # --- CASE 2: Twilio/From+Body ---
+    # --- CASE 2: Twilio / From+Body ---
     elif "From" in data and "Body" in data:
         phone = normalize_phone(data.get("From"))
         body = data.get("Body", "").strip()
         name = body.split()[0].capitalize() if body else "Unknown"
 
-    # Si aucun status fourni, utiliser le body
+    # Fallback
     if not status_term:
         status_term = body
 
     latitude, longitude = extract_coordinates(body)
-
-    # --- Forcer status à "red" ---
     status = "red"
 
     # --- DB update ---
@@ -176,7 +173,6 @@ def receive_sms():
             delivered_qty = row[1]
             latitude = latitude or row[2]
             longitude = longitude or row[3]
-
             c.execute("""
                 UPDATE clients
                 SET order_qty=?, last_request_time=?, name=?, latitude=?, longitude=?, status_term=?, status=?
@@ -195,6 +191,7 @@ def receive_sms():
         c.execute("INSERT INTO messages (phone, body, received_at) VALUES (?, ?, ?)", (phone, status_term, datetime.utcnow()))
 
     return "OK", 200
+
 
 
 
