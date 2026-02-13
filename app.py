@@ -125,44 +125,66 @@ def delete_client():
 # ----------------------
 @app.route("/sms", methods=["POST"])
 def receive_sms():
-    data = request.form.to_dict()
-    print("RAW DATA:", data)
+    # Accept BOTH JSON and form-data
+    data = request.get_json(silent=True)
+    if not data:
+        data = request.form.to_dict()
+
+    print("RECEIVED DATA:", data)
 
     phone = ""
     name = ""
     body = ""
-    status_term = data.get("status", "").strip()
+    status_term = ""
 
-    # --- CASE 1: custom "key" format ---
+    # -------------------------
+    # CASE 1: Custom "key"
+    # -------------------------
     if "key" in data:
         raw_text = data.get("key", "").strip()
+
         phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
         phone = phone_match.group(1) if phone_match else ""
+
         name_match = re.search(r"\((.*?)\)", raw_text)
         name = name_match.group(1).strip() if name_match else "Unknown"
+
         body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
-        body = body_match.group(1).strip() if body_match else ""
-    # --- CASE 2: Twilio/From+Body ---
+        body = body_match.group(1).strip() if body_match else raw_text
+
+        status_term = body
+
+    # -------------------------
+    # CASE 2: Twilio format
+    # -------------------------
     elif "From" in data and "Body" in data:
         phone = normalize_phone(data.get("From"))
         body = data.get("Body", "").strip()
         name = body.split()[0].capitalize() if body else "Unknown"
+        status_term = body
 
-    if not phone or (not body and not status_term):
-        return "Missing data", 400
+    # -------------------------
+    # VALIDATION
+    # -------------------------
+    if not phone:
+        return "Missing phone number", 400
 
     if not status_term:
         status_term = body
 
     latitude, longitude = extract_coordinates(body)
 
-    # --- Forcer status à "red" ---
     status = "red"
 
-    # --- DB update ---
+    # -------------------------
+    # DATABASE UPDATE
+    # -------------------------
     with sqlite3.connect(DB) as conn:
         c = conn.cursor()
-        c.execute("SELECT order_qty, delivered_qty, latitude, longitude FROM clients WHERE phone=?", (phone,))
+        c.execute(
+            "SELECT order_qty, delivered_qty, latitude, longitude FROM clients WHERE phone=?",
+            (phone,)
+        )
         row = c.fetchone()
 
         if row:
@@ -175,18 +197,41 @@ def receive_sms():
                 UPDATE clients
                 SET order_qty=?, last_request_time=?, name=?, latitude=?, longitude=?, status_term=?, status=?
                 WHERE phone=?
-            """, (order_qty, datetime.utcnow(), name, latitude, longitude, status_term, status, phone))
+            """, (
+                order_qty,
+                datetime.utcnow(),
+                name,
+                latitude,
+                longitude,
+                status_term,
+                status,
+                phone
+            ))
         else:
-            order_qty = 1
-            delivered_qty = 0
             c.execute("""
                 INSERT INTO clients (
-                    name, phone, order_qty, delivered_qty, status, status_term, latitude, longitude, last_request_time
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (name, phone, order_qty, delivered_qty, status, status_term, latitude or 36.8065, longitude or 10.1815, datetime.utcnow()))
+                    name, phone, order_qty, delivered_qty, status,
+                    status_term, latitude, longitude, last_request_time
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                name,
+                phone,
+                1,
+                0,
+                status,
+                status_term,
+                latitude or 36.8065,
+                longitude or 10.1815,
+                datetime.utcnow()
+            ))
 
-        # --- Historique des messages ---
-        c.execute("INSERT INTO messages (phone, body, received_at) VALUES (?, ?, ?)", (phone, status_term, datetime.utcnow()))
+        c.execute("""
+            INSERT INTO messages (phone, body, received_at)
+            VALUES (?, ?, ?)
+        """, (phone, status_term, datetime.utcnow()))
+
+        conn.commit()
 
     return "OK", 200
 
