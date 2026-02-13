@@ -9,7 +9,7 @@ from streamlit_folium import st_folium
 #DELETE_URL = "http://127.0.0.1:5000/delete_client"
 #MESSAGES_API = "http://127.0.0.1:5000/messages"
 import os
-BACKEND_URL = "https://delivery-flask-izwm.onrender.com"  # <-- ton backend en ligne
+BACKEND_URL = "https://delivery-flask-rpqi.onrender.com"  # <-- ton backend en ligne
 API_URL = f"{BACKEND_URL}/clients"
 DELIVER_URL = f"{BACKEND_URL}/deliver"
 DELETE_URL = f"{BACKEND_URL}/delete_client"
