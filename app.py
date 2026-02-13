@@ -4,7 +4,8 @@ import sqlite3
 import re
 
 app = Flask(__name__)
-DB = "delivery.db"
+import os
+DB = os.path.join("/tmp", "delivery.db")
 
 
 
