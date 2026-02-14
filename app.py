@@ -7,7 +7,8 @@ import os
 app = Flask(__name__)
 
 # Database path for Render
-DB = os.path.join("/tmp", "delivery.db")
+DB = "delivery.db"
+
 
 
 # ----------------------
