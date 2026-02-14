@@ -1,17 +1,65 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
-import sqlite3
 import re
 import os
 
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# ---------------------------
+# Flask setup
+# ---------------------------
 app = Flask(__name__)
 
-# Database path (à la racine du projet)
-DB = "delivery.db"
+# ---------------------------
+# Database config
+# ---------------------------
+USE_POSTGRES = True  # True = PostgreSQL on Render, False = SQLite local
 
-# ----------------------
+# Use Render DATABASE_URL or hardcoded Postgres URL
+POSTGRES_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://delivery_lgg1_user:ZfJwJxjizV6tymcQsIBAniHrqiJnkTpZ@dpg-d688mt3nv86c73eaje8g-a/delivery_lgg1"
+)
+
+DB_URL = POSTGRES_URL if USE_POSTGRES else "sqlite:///delivery.db"
+
+# Create engine and session
+engine = create_engine(DB_URL)
+Base = declarative_base()
+SessionLocal = sessionmaker(bind=engine)
+session = SessionLocal()
+
+# ---------------------------
+# Models
+# ---------------------------
+class Client(Base):
+    __tablename__ = "clients"
+    client_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String)
+    phone = Column(String, unique=True)
+    order_qty = Column(Integer, default=0)
+    delivered_qty = Column(Integer, default=0)
+    status = Column(String)
+    status_term = Column(String)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    last_request_time = Column(DateTime, default=datetime.utcnow)
+
+class Message(Base):
+    __tablename__ = "messages"
+    message_id = Column(Integer, primary_key=True, autoincrement=True)
+    phone = Column(String)
+    body = Column(String)
+    received_at = Column(DateTime, default=datetime.utcnow)
+
+# Create tables if they don't exist
+Base.metadata.create_all(engine)
+
+# ---------------------------
 # Helpers
-# ----------------------
+# ---------------------------
 def normalize_phone(phone: str) -> str:
     if not phone:
         return ""
@@ -20,52 +68,35 @@ def normalize_phone(phone: str) -> str:
 def get_status(order_qty, delivered_qty):
     return "green" if delivered_qty >= order_qty else "red"
 
+def dms_to_decimal(dms_str):
+    match = re.match(r"(\d+)°\s*(\d+)'\s*([\d\.]+)\s*([NSEW])", dms_str.strip(), re.IGNORECASE)
+    if not match:
+        return None
+    deg, minutes, seconds, direction = match.groups()
+    dec = float(deg) + float(minutes)/60 + float(seconds)/3600
+    if direction.upper() in ['S','W']:
+        dec = -dec
+    return dec
+
 def extract_coordinates(text):
     match = re.search(r"([-+]?\d*\.\d+),\s*([-+]?\d*\.\d+)", text)
     if match:
         return float(match.group(1)), float(match.group(2))
+    dms_match = re.findall(r"(\d+°\s*\d+'\s*[\d\.]+\s*[NSEW])", text, re.IGNORECASE)
+    if len(dms_match) == 2:
+        return dms_to_decimal(dms_match[0]), dms_to_decimal(dms_match[1])
     return None, None
 
-# ----------------------
-# INIT DB
-# ----------------------
-def init_db():
-    with sqlite3.connect(DB) as conn:
-        c = conn.cursor()
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS clients (
-            client_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            phone TEXT UNIQUE,
-            order_qty INTEGER DEFAULT 0,
-            delivered_qty INTEGER DEFAULT 0,
-            status TEXT,
-            status_term TEXT,
-            latitude REAL,
-            longitude REAL,
-            last_request_time TEXT
-        )
-        """)
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            phone TEXT,
-            body TEXT,
-            received_at TEXT
-        )
-        """)
-        conn.commit()
+# ---------------------------
+# Routes
+# ---------------------------
+@app.route("/")
+def home():
+    return "Delivery API Running"
 
-init_db()
-
-# ----------------------
-# RECEIVE SMS
-# ----------------------
 @app.route("/sms", methods=["POST"])
 def receive_sms():
-    data = request.get_json() if request.is_json else request.form.to_dict()
-
-    print("RAW DATA:", data)
+    data = request.get_json() or request.form.to_dict()
 
     phone = ""
     name = ""
@@ -73,150 +104,109 @@ def receive_sms():
     status_term = data.get("status", "").strip()
 
     if "key" in data:
-        raw_text = data.get("key", "")
+        raw_text = data.get("key", "").strip()
         phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
-        phone = phone_match.group(1) if phone_match else "unknown"
+        phone = phone_match.group(1) if phone_match else "TEST_PHONE"
         name_match = re.search(r"\((.*?)\)", raw_text)
-        name = name_match.group(1) if name_match else "client"
+        name = name_match.group(1).strip() if name_match else "TEST_NAME"
         body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
-        body = body_match.group(1) if body_match else raw_text
-    elif "From" in data:
+        body = body_match.group(1).strip() if body_match else raw_text
+    elif "From" in data and "Body" in data:
         phone = normalize_phone(data.get("From"))
-        body = data.get("Body", "")
-        name = body.split()[0] if body else "client"
+        body = data.get("Body", "").strip()
+        name = body.split()[0].capitalize() if body else "Unknown"
 
     if not status_term:
         status_term = body
 
     latitude, longitude = extract_coordinates(body)
+    status = "red"
 
-    with sqlite3.connect(DB) as conn:
-        c = conn.cursor()
-        c.execute("SELECT order_qty, delivered_qty FROM clients WHERE phone=?", (phone,))
-        row = c.fetchone()
+    client = session.query(Client).filter_by(phone=phone).first()
+    if client:
+        client.order_qty += 1
+        client.latitude = latitude or client.latitude
+        client.longitude = longitude or client.longitude
+        client.status_term = status_term
+        client.status = get_status(client.order_qty, client.delivered_qty)
+        client.name = name
+        client.last_request_time = datetime.utcnow()
+    else:
+        client = Client(
+            name=name,
+            phone=phone,
+            order_qty=1,
+            delivered_qty=0,
+            status="red",
+            status_term=status_term,
+            latitude=latitude or 36.8065,
+            longitude=longitude or 10.1815
+        )
+        session.add(client)
 
-        if row:
-            order_qty = row[0] + 1
-            delivered_qty = row[1]
-            status = get_status(order_qty, delivered_qty)
-            c.execute("""
-            UPDATE clients
-            SET order_qty=?, name=?, latitude=?, longitude=?, status=?, status_term=?, last_request_time=?
-            WHERE phone=?
-            """, (order_qty, name, latitude, longitude, status, status_term, datetime.utcnow(), phone))
-        else:
-            c.execute("""
-            INSERT INTO clients
-            (name, phone, order_qty, delivered_qty, status, status_term, latitude, longitude, last_request_time)
-            VALUES (?,?,?,?,?,?,?,?,?)
-            """, (name, phone, 1, 0, "red", status_term, latitude, longitude, datetime.utcnow()))
+    msg = Message(phone=phone, body=status_term)
+    session.add(msg)
+    session.commit()
+    return "OK", 200
 
-        # Insert message
-        c.execute("""
-        INSERT INTO messages (phone, body, received_at)
-        VALUES (?,?,?)
-        """, (phone, status_term, datetime.utcnow()))
-
-        conn.commit()
-
-    return jsonify({"success": True})
-
-# ----------------------
-# GET CLIENTS
-# ----------------------
 @app.route("/clients", methods=["GET"])
-def clients():
-    with sqlite3.connect(DB) as conn:
-        c = conn.cursor()
-        c.execute("SELECT * FROM clients ORDER BY last_request_time DESC")
-        rows = c.fetchall()
+def get_clients():
+    clients = session.query(Client).all()
     return jsonify([
         {
-            "client_id": r[0],
-            "name": r[1],
-            "phone": r[2],
-            "order_qty": r[3],
-            "delivered_qty": r[4],
-            "status": r[5],
-            "status_term": r[6],
-            "latitude": r[7],
-            "longitude": r[8],
-            "last_request_time": r[9]
-        }
-        for r in rows
+            "client_id": c.client_id,
+            "name": c.name,
+            "phone": c.phone,
+            "order_qty": c.order_qty,
+            "delivered_qty": c.delivered_qty,
+            "status": c.status,
+            "status_term": c.status_term,
+            "latitude": c.latitude,
+            "longitude": c.longitude
+        } for c in clients
     ])
 
-# ----------------------
-# GET MESSAGES
-# ----------------------
-@app.route("/messages", methods=["GET"])
-def messages():
-    with sqlite3.connect(DB) as conn:
-        c = conn.cursor()
-        c.execute("""
-        SELECT m.message_id, m.phone, m.body, m.received_at, c.name
-        FROM messages m
-        LEFT JOIN clients c ON m.phone = c.phone
-        ORDER BY m.received_at DESC
-        """)
-        rows = c.fetchall()
-
-    return jsonify([
-        {
-            "message_id": r[0],
-            "phone": r[1],
-            "body": r[2],
-            "received_at": r[3],
-            "name": r[4] if r[4] else "unknown"
-        }
-        for r in rows
-    ])
-
-# ----------------------
-# DELIVER
-# ----------------------
 @app.route("/deliver", methods=["POST"])
 def deliver():
-    data = request.get_json()
+    data = request.get_json() or {}
     name = data.get("name")
     qty = int(data.get("delivered_qty", 1))
-
-    with sqlite3.connect(DB) as conn:
-        c = conn.cursor()
-        c.execute("SELECT order_qty, delivered_qty FROM clients WHERE name=?", (name,))
-        row = c.fetchone()
-        if row:
-            delivered = row[1] + qty
-            status = get_status(row[0], delivered)
-            c.execute("UPDATE clients SET delivered_qty=?, status=? WHERE name=?", (delivered, status, name))
-            conn.commit()
-            return jsonify({"status": status})
+    client = session.query(Client).filter_by(name=name).first()
+    if client:
+        client.delivered_qty += qty
+        client.status = get_status(client.order_qty, client.delivered_qty)
+        session.commit()
+        return jsonify({"status": client.status})
     return jsonify({"error": "Client not found"}), 404
 
-# ----------------------
-# DELETE CLIENT
-# ----------------------
 @app.route("/delete_client", methods=["POST"])
 def delete_client():
-    data = request.get_json()
+    data = request.get_json() or {}
     name = data.get("name")
-    if not name:
-        return jsonify({"error": "No name provided"}), 400
+    client = session.query(Client).filter_by(name=name).first()
+    if client:
+        session.delete(client)
+        session.commit()
+        return jsonify({"deleted": True})
+    return jsonify({"deleted": False, "error": "Client not found"}), 404
 
-    with sqlite3.connect(DB) as conn:
-        c = conn.cursor()
-        c.execute("SELECT client_id FROM clients WHERE name=?", (name,))
-        if c.fetchone():
-            c.execute("DELETE FROM clients WHERE name=?", (name,))
-            c.execute("DELETE FROM messages WHERE phone NOT IN (SELECT phone FROM clients)")
-            conn.commit()
-            return jsonify({"success": True})
-        else:
-            return jsonify({"error": "Client not found"}), 404
+@app.route("/messages", methods=["GET"])
+def get_messages():
+    messages = session.query(Message).all()
+    result = []
+    for m in messages:
+        client = session.query(Client).filter_by(phone=m.phone).first()
+        result.append({
+            "message_id": m.message_id,
+            "phone": m.phone,
+            "name": client.name if client else "",
+            "body": m.body,
+            "received_at": m.received_at.isoformat()
+        })
+    return jsonify(result)
 
-# ----------------------
-# ROOT
-# ----------------------
-@app.route("/")
-def home():
-    return jsonify({"status": "Delivery API Running"})
+# ---------------------------
+# Run
+# ---------------------------
+if __name__ == "__main__":
+    app.run(debug=True)
