@@ -97,42 +97,69 @@ def home():
 @app.route("/sms", methods=["POST"])
 def receive_sms():
 
-    # Accept JSON, FORM, or RAW TEXT
+    # -------------------------
+    # Detect content type
+    # -------------------------
+
     if request.is_json:
+
         data = request.get_json()
 
+        phone = normalize_phone(data.get("From", "UNKNOWN"))
+        body = data.get("Body", "")
+
     elif request.form:
-        data = request.form.to_dict()
+
+        phone = normalize_phone(request.form.get("From", "UNKNOWN"))
+        body = request.form.get("Body", "")
 
     else:
-        raw = request.data.decode("utf-8", errors="ignore")
-        data = {
-            "From": "UNKNOWN",
-            "Body": raw
-        }
 
-    phone = normalize_phone(data.get("From", "UNKNOWN"))
-    body = data.get("Body", "").strip()
-    name = body.split()[0].capitalize() if body else "Unknown"
-    status_term = data.get("status", body)
+        # ANDROID SMS GATEWAY sends RAW TEXT
+        raw = request.data.decode("utf-8", errors="ignore")
+
+        print("RAW SMS:", raw)
+
+        body = raw
+
+        # try extract phone
+        phone_match = re.search(r"\+?\d{8,15}", raw)
+
+        if phone_match:
+            phone = normalize_phone(phone_match.group())
+
+        else:
+            phone = "UNKNOWN"
+
+    # -------------------------
+    # Fix empty body
+    # -------------------------
+
+    if not body:
+        body = "EMPTY"
+
+    name = body.split()[0].capitalize()
+
+    status_term = body
+
 
     latitude, longitude = extract_coordinates(body)
 
+
     client = session.query(Client).filter_by(phone=phone).first()
+
 
     if client:
 
         client.order_qty += 1
-        client.latitude = latitude or client.latitude
-        client.longitude = longitude or client.longitude
         client.status_term = status_term
         client.status = get_status(client.order_qty, client.delivered_qty)
-        client.name = name
         client.last_request_time = datetime.utcnow()
 
     else:
 
         client = Client(
+
             name=name,
             phone=phone,
             order_qty=1,
@@ -141,19 +168,23 @@ def receive_sms():
             status_term=status_term,
             latitude=latitude or 36.8065,
             longitude=longitude or 10.1815
+
         )
 
         session.add(client)
 
-    msg = Message(phone=phone, body=status_term)
+
+    msg = Message(phone=phone, body=body)
 
     session.add(msg)
 
     session.commit()
 
-    print("SMS SAVED:", phone, status_term)
+
+    print("SAVED:", phone, body)
 
     return "OK", 200
+
 
 
 @app.route("/clients", methods=["GET"])
