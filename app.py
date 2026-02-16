@@ -98,31 +98,69 @@ def home():
 def receive_sms():
 
     # -------------------------
-    # Detect content type
+    # Read JSON, FORM, or RAW
     # -------------------------
 
     if request.is_json:
-
         data = request.get_json()
 
-        phone = normalize_phone(data.get("From", "UNKNOWN"))
-        body = data.get("Body", "")
-
     elif request.form:
+        data = request.form.to_dict()
 
-        phone = normalize_phone(request.form.get("From", "UNKNOWN"))
-        body = request.form.get("Body", "")
+    else:
+        raw = request.data.decode("utf-8", errors="ignore")
+        data = {"key": raw}
+
+    print("RAW DATA:", data)
+
+
+    phone = ""
+    name = ""
+    body = ""
+    status_term = data.get("status", "").strip()
+
+
+    # -------------------------
+    # CASE 1: custom "key"
+    # -------------------------
+
+    if "key" in data:
+
+        raw_text = data.get("key", "").strip()
+
+        phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
+        phone = phone_match.group(1) if phone_match else "TEST_PHONE"
+
+        name_match = re.search(r"\((.*?)\)", raw_text)
+        name = name_match.group(1).strip() if name_match else "TEST_NAME"
+
+        body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
+        body = body_match.group(1).strip() if body_match else raw_text
+
+
+    # -------------------------
+    # CASE 2: From / Body
+    # -------------------------
+
+    elif "From" in data and "Body" in data:
+
+        phone = normalize_phone(data.get("From"))
+
+        body = data.get("Body", "").strip()
+
+        name = body.split()[0].capitalize() if body else "Unknown"
+
+
+    # -------------------------
+    # fallback RAW
+    # -------------------------
 
     else:
 
-        # ANDROID SMS GATEWAY sends RAW TEXT
         raw = request.data.decode("utf-8", errors="ignore")
-
-        print("RAW SMS:", raw)
 
         body = raw
 
-        # try extract phone
         phone_match = re.search(r"\+?\d{8,15}", raw)
 
         if phone_match:
@@ -131,20 +169,20 @@ def receive_sms():
         else:
             phone = "UNKNOWN"
 
-    # -------------------------
-    # Fix empty body
-    # -------------------------
+        name = body.split()[0].capitalize() if body else "Unknown"
 
-    if not body:
-        body = "EMPTY"
 
-    name = body.split()[0].capitalize()
 
-    status_term = body
+    if not status_term:
+        status_term = body
 
 
     latitude, longitude = extract_coordinates(body)
 
+
+    # -------------------------
+    # DATABASE
+    # -------------------------
 
     client = session.query(Client).filter_by(phone=phone).first()
 
@@ -152,36 +190,70 @@ def receive_sms():
     if client:
 
         client.order_qty += 1
+
+        client.latitude = latitude or client.latitude
+
+        client.longitude = longitude or client.longitude
+
         client.status_term = status_term
+
         client.status = get_status(client.order_qty, client.delivered_qty)
+
+        client.name = name
+
         client.last_request_time = datetime.utcnow()
+
 
     else:
 
         client = Client(
 
             name=name,
+
             phone=phone,
+
             order_qty=1,
+
             delivered_qty=0,
+
             status="red",
+
             status_term=status_term,
+
             latitude=latitude or 36.8065,
-            longitude=longitude or 10.1815
+
+            longitude=longitude or 10.1815,
+
+            last_request_time=datetime.utcnow()
 
         )
 
         session.add(client)
 
 
-    msg = Message(phone=phone, body=body)
+
+    # -------------------------
+    # Save Message History
+    # -------------------------
+
+    msg = Message(
+
+        phone=phone,
+
+        body=status_term,
+
+        received_at=datetime.utcnow()
+
+    )
 
     session.add(msg)
+
 
     session.commit()
 
 
-    print("SAVED:", phone, body)
+    print("SAVED:", phone, status_term)
+
 
     return "OK", 200
 
