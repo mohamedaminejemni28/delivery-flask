@@ -178,7 +178,12 @@ def receive_sms():
 
 
     latitude, longitude = extract_coordinates(body)
+# -------------------------
+# FIX NAME
+# -------------------------
 
+    if not name or name.strip() == "" or name.upper() in ["TEST_NAME", "UNKNOWN", "NONE"]:
+        name = phone
 
     # -------------------------
     # DATABASE
