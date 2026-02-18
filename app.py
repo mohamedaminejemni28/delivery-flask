@@ -97,8 +97,11 @@ def home():
 @app.route("/sms", methods=["POST"])
 def receive_sms():
 
+    import re
+    from datetime import datetime
+
     # -------------------------
-    # Read JSON, FORM, or RAW
+    # READ INPUT
     # -------------------------
 
     if request.is_json:
@@ -114,32 +117,49 @@ def receive_sms():
     print("RAW DATA:", data)
 
 
-    phone = ""
-    name = ""
+    phone = None
+    name = None
     body = ""
     status_term = data.get("status", "").strip()
 
 
     # -------------------------
-    # CASE 1: custom "key"
+    # CASE 1: SMS Transmitter format
     # -------------------------
 
     if "key" in data:
 
         raw_text = data.get("key", "").strip()
 
+
+        # extract phone
         phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
-        phone = phone_match.group(1) if phone_match else "TEST_PHONE"
 
+        if phone_match:
+            phone = normalize_phone(phone_match.group(1))
+        else:
+            # create unique fake phone
+            phone = "UNKNOWN_" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+
+
+        # extract name
         name_match = re.search(r"\((.*?)\)", raw_text)
-        name = name_match.group(1).strip() if name_match else "TEST_NAME"
 
+        if name_match:
+            name = name_match.group(1).strip()
+
+
+        # extract message
         body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
-        body = body_match.group(1).strip() if body_match else raw_text
+
+        if body_match:
+            body = body_match.group(1).strip()
+        else:
+            body = raw_text
 
 
     # -------------------------
-    # CASE 2: From / Body
+    # CASE 2: Twilio format
     # -------------------------
 
     elif "From" in data and "Body" in data:
@@ -148,11 +168,11 @@ def receive_sms():
 
         body = data.get("Body", "").strip()
 
-        name = body.split()[0].capitalize() if body else "Unknown"
+        name = phone
 
 
     # -------------------------
-    # fallback RAW
+    # CASE 3: RAW fallback
     # -------------------------
 
     else:
@@ -165,32 +185,45 @@ def receive_sms():
 
         if phone_match:
             phone = normalize_phone(phone_match.group())
-
         else:
-            phone = "UNKNOWN"
+            phone = "UNKNOWN_" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
-        name = body.split()[0].capitalize() if body else "Unknown"
+        name = phone
 
 
+    # -------------------------
+    # STATUS TERM
+    # -------------------------
 
     if not status_term:
         status_term = body
 
 
-    latitude, longitude = extract_coordinates(body)
-# -------------------------
-# FIX NAME
-# -------------------------
+    # -------------------------
+    # COORDINATES
+    # -------------------------
 
-    if not name or name.strip() == "" or name.upper() in ["TEST_NAME", "UNKNOWN", "NONE"]:
-        name = phone
+    latitude, longitude = extract_coordinates(body)
+
 
     # -------------------------
-    # DATABASE
+    # NAME FIX
+    # -------------------------
+
+    if not name:
+        name = phone
+
+
+    # -------------------------
+    # SEARCH CLIENT
     # -------------------------
 
     client = session.query(Client).filter_by(phone=phone).first()
 
+
+    # -------------------------
+    # UPDATE OR CREATE CLIENT
+    # -------------------------
 
     if client:
 
@@ -236,9 +269,8 @@ def receive_sms():
         session.add(client)
 
 
-
     # -------------------------
-    # Save Message History
+    # SAVE MESSAGE HISTORY
     # -------------------------
 
     msg = Message(
