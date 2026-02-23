@@ -209,10 +209,8 @@ def receive_sms():
         client.last_request_time = datetime.utcnow()
 
         # 🔴 LOGIQUE CORRECTE DU STATUT
-        if client.delivered_qty < client.order_qty:
-            client.status = "red"
-        else:
-            client.status = "green"
+       
+        client.status = "red"
 
     else:
 
