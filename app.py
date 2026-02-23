@@ -235,7 +235,7 @@ def receive_sms():
 
         client.status_term = status_term
 
-        client.status = get_status(client.order_qty, client.delivered_qty)
+        client.status = "red"
 
         client.name = name
 
