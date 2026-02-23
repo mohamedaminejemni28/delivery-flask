@@ -106,22 +106,18 @@ def receive_sms():
 
     if request.is_json:
         data = request.get_json()
-
     elif request.form:
         data = request.form.to_dict()
-
     else:
         raw = request.data.decode("utf-8", errors="ignore")
         data = {"key": raw}
 
     print("RAW DATA:", data)
 
-
     phone = None
     name = None
     body = ""
     status_term = data.get("status", "").strip()
-
 
     # -------------------------
     # CASE 1: SMS Transmitter format
@@ -131,32 +127,18 @@ def receive_sms():
 
         raw_text = data.get("key", "").strip()
 
-
-        # extract phone
         phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
-
         if phone_match:
             phone = normalize_phone(phone_match.group(1))
         else:
-            # create unique fake phone
             phone = "UNKNOWN_" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
-
-        # extract name
         name_match = re.search(r"\((.*?)\)", raw_text)
-
         if name_match:
             name = name_match.group(1).strip()
 
-
-        # extract message
         body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
-
-        if body_match:
-            body = body_match.group(1).strip()
-        else:
-            body = raw_text
-
+        body = body_match.group(1).strip() if body_match else raw_text
 
     # -------------------------
     # CASE 2: Twilio format
@@ -165,11 +147,8 @@ def receive_sms():
     elif "From" in data and "Body" in data:
 
         phone = normalize_phone(data.get("From"))
-
         body = data.get("Body", "").strip()
-
         name = phone
-
 
     # -------------------------
     # CASE 3: RAW fallback
@@ -178,18 +157,15 @@ def receive_sms():
     else:
 
         raw = request.data.decode("utf-8", errors="ignore")
-
         body = raw
 
         phone_match = re.search(r"\+?\d{8,15}", raw)
-
         if phone_match:
             phone = normalize_phone(phone_match.group())
         else:
             phone = "UNKNOWN_" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
         name = phone
-
 
     # -------------------------
     # STATUS TERM
@@ -198,21 +174,14 @@ def receive_sms():
     if not status_term:
         status_term = body
 
-
     # -------------------------
     # COORDINATES
     # -------------------------
 
     latitude, longitude = extract_coordinates(body)
 
-
-    # -------------------------
-    # NAME FIX
-    # -------------------------
-
     if not name:
         name = phone
-
 
     # -------------------------
     # SEARCH CLIENT
@@ -220,77 +189,61 @@ def receive_sms():
 
     client = session.query(Client).filter_by(phone=phone).first()
 
-
     # -------------------------
     # UPDATE OR CREATE CLIENT
     # -------------------------
 
     if client:
 
+        # Nouvelle commande
         client.order_qty += 1
 
-        client.latitude = latitude or client.latitude
-
-        client.longitude = longitude or client.longitude
+        # Mise à jour coordonnées si envoyées
+        if latitude:
+            client.latitude = latitude
+        if longitude:
+            client.longitude = longitude
 
         client.status_term = status_term
-
-        client.status = get_status(client.order_qty, client.delivered_qty)
-
         client.name = name
-
         client.last_request_time = datetime.utcnow()
 
+        # 🔴 LOGIQUE CORRECTE DU STATUT
+        if client.delivered_qty < client.order_qty:
+            client.status = "red"
+        else:
+            client.status = "green"
 
     else:
 
         client = Client(
-
             name=name,
-
             phone=phone,
-
             order_qty=1,
-
             delivered_qty=0,
-
-            status="red",
-
+            status="red",  # nouvelle commande = rouge
             status_term=status_term,
-
             latitude=latitude or 36.8065,
-
             longitude=longitude or 10.1815,
-
             last_request_time=datetime.utcnow()
-
         )
 
         session.add(client)
-
 
     # -------------------------
     # SAVE MESSAGE HISTORY
     # -------------------------
 
     msg = Message(
-
         phone=phone,
-
-        body=status_term,
-
+        body=body,  # ✅ on sauvegarde le vrai message
         received_at=datetime.utcnow()
-
     )
 
     session.add(msg)
-
-
     session.commit()
 
-
     print("SAVED:", phone, status_term)
-
 
     return "OK", 200
 
