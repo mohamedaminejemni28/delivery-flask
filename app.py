@@ -98,8 +98,6 @@ def home():
 
 
 
-
-
 @app.route("/sms", methods=["POST"])
 def receive_sms():
 
@@ -112,10 +110,8 @@ def receive_sms():
 
     if request.is_json:
         data = request.get_json()
-
     elif request.form:
         data = request.form.to_dict()
-
     else:
         raw = request.data.decode("utf-8", errors="ignore")
         data = {"key": raw}
@@ -128,7 +124,7 @@ def receive_sms():
     status_term = data.get("status", "").strip()
 
     # -------------------------
-    # CASE 1: SMS Transmitter format
+    # CASE 1: SMS Transmitter
     # -------------------------
 
     if "key" in data:
@@ -136,33 +132,30 @@ def receive_sms():
         raw_text = data.get("key", "").strip()
 
         phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
-
         if phone_match:
             phone = normalize_phone(phone_match.group(1))
         else:
             phone = "UNKNOWN_" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
         name_match = re.search(r"\((.*?)\)", raw_text)
-
         if name_match:
             name = name_match.group(1).strip()
 
         body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
-
         if body_match:
             body = body_match.group(1).strip()
         else:
             body = raw_text
 
     # -------------------------
-    # CASE 2: Twilio format
+    # CASE 2: Twilio
     # -------------------------
 
     elif "From" in data and "Body" in data:
 
         phone = normalize_phone(data.get("From"))
         body = data.get("Body", "").strip()
-        name = None   # ⚠️ Important : ne pas mettre phone ici
+        name = None  # IMPORTANT
 
     # -------------------------
     # CASE 3: RAW fallback
@@ -174,13 +167,12 @@ def receive_sms():
         body = raw
 
         phone_match = re.search(r"\+?\d{8,15}", raw)
-
         if phone_match:
             phone = normalize_phone(phone_match.group())
         else:
             phone = "UNKNOWN_" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
-        name = None   # ⚠️ Important
+        name = None
 
     # -------------------------
     # STATUS TERM
@@ -196,7 +188,7 @@ def receive_sms():
     latitude, longitude = extract_coordinates(body)
 
     # -------------------------
-    # NAME VALIDATION FUNCTION
+    # NAME VALIDATION
     # -------------------------
 
     def is_valid_name(name, phone):
@@ -229,8 +221,8 @@ def receive_sms():
         client.status = "red"
         client.last_request_time = datetime.utcnow()
 
-        # ✅ Update name ONLY if valid
-        if is_valid_name(name, phone):
+        # 🚫 NEVER override existing real name
+        if (not client.name or client.name == client.phone) and is_valid_name(name, phone):
             client.name = name
 
     else:
@@ -265,10 +257,6 @@ def receive_sms():
     print("SAVED:", phone, status_term)
 
     return "OK", 200
-
-
-
-
 
 
 
