@@ -330,8 +330,6 @@ def delete_client():
 
 
 
-
-
 @app.route("/messages", methods=["GET"])
 def get_messages():
 
@@ -342,18 +340,27 @@ def get_messages():
         .all()
     )
 
-    result = []
+    conversations = {}
 
     for message, client in messages:
-        result.append({
+
+        phone = message.phone
+        name = client.name if client and client.name else phone
+
+        if phone not in conversations:
+            conversations[phone] = {
+                "phone": phone,
+                "name": name,
+                "messages": []
+            }
+
+        conversations[phone]["messages"].append({
             "message_id": message.message_id,
-            "phone": message.phone,
-            "name": client.name if client and client.name else message.phone,
             "body": message.body,
             "received_at": message.received_at.isoformat()
         })
 
-    return jsonify(result)
+    return jsonify(list(conversations.values()))
 # ---------------------------
 # Run
 # ---------------------------
