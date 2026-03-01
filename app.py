@@ -330,6 +330,8 @@ def delete_client():
 
 
 
+from flask import jsonify
+
 @app.route("/messages", methods=["GET"])
 def get_messages():
 
@@ -340,27 +342,31 @@ def get_messages():
         .all()
     )
 
-    conversations = {}
+    result = []
 
     for message, client in messages:
 
-        phone = message.phone
-        name = client.name if client and client.name else phone
+        # ✅ Sécuriser le nom
+        if client and client.name:
+            name = client.name
+        else:
+            name = message.phone
 
-        if phone not in conversations:
-            conversations[phone] = {
-                "phone": phone,
-                "name": name,
-                "messages": []
-            }
+        # ✅ Sécuriser la date
+        if message.received_at:
+            received_time = message.received_at.isoformat()
+        else:
+            received_time = None
 
-        conversations[phone]["messages"].append({
+        result.append({
             "message_id": message.message_id,
+            "phone": message.phone,
+            "name": name,
             "body": message.body,
-            "received_at": message.received_at.isoformat()
+            "received_at": received_time
         })
 
-    return jsonify(list(conversations.values()))
+    return jsonify(result)
 # ---------------------------
 # Run
 # ---------------------------
