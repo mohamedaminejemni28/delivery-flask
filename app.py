@@ -220,27 +220,27 @@ def receive_sms():
 
     client = session.query(Client).filter_by(phone=phone).first()
 
-    # -------------------------
-    # UPDATE OR CREATE CLIENT
-    # -------------------------
+ 
+
 
     if client:
-
+    
         client.order_qty += 1
         client.latitude = latitude or client.latitude
         client.longitude = longitude or client.longitude
         client.status_term = status_term
         client.status = "red"
         client.last_request_time = datetime.utcnow()
-
-        # Never override existing real name
-        if (not client.name or client.name == client.phone) and is_valid_name(name, phone):
-            client.name = name
-
+    
+        # Mettre le nom uniquement si valide ET pas encore défini
+        if is_valid_name(name, phone):
+            if not client.name or client.name == client.phone:
+                client.name = name
+    
     else:
-
+    
         client = Client(
-            name=name if is_valid_name(name, phone) else phone,
+            name=name if is_valid_name(name, phone) else None,
             phone=phone,
             order_qty=1,
             delivered_qty=0,
@@ -250,9 +250,8 @@ def receive_sms():
             longitude=longitude or 10.1815,
             last_request_time=datetime.utcnow()
         )
-
+    
         session.add(client)
-
     # -------------------------
     # SAVE MESSAGE HISTORY
     # -------------------------
@@ -346,24 +345,19 @@ def get_messages():
 
     for message, client in messages:
 
-        # ✅ Sécuriser le nom
-        if client and client.name:
-            name = client.name
-        else:
-            name = message.phone
+        display_name = None
 
-        # ✅ Sécuriser la date
-        if message.received_at:
-            received_time = message.received_at.isoformat()
+        if client and client.name:
+            display_name = client.name
         else:
-            received_time = None
+            display_name = message.phone
 
         result.append({
             "message_id": message.message_id,
             "phone": message.phone,
-            "name": name,
+            "name": display_name,
             "body": message.body,
-            "received_at": received_time
+            "received_at": message.received_at.isoformat() if message.received_at else None
         })
 
     return jsonify(result)
