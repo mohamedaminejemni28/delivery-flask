@@ -327,21 +327,33 @@ def delete_client():
         return jsonify({"deleted": True})
     return jsonify({"deleted": False, "error": "Client not found"}), 404
 
+
+
+
+
+
 @app.route("/messages", methods=["GET"])
 def get_messages():
-    messages = session.query(Message).all()
-    result = []
-    for m in messages:
-        client = session.query(Client).filter_by(phone=m.phone).first()
-        result.append({
-            "message_id": m.message_id,
-            "phone": m.phone,
-            "name": client.name if client else "",
-            "body": m.body,
-            "received_at": m.received_at.isoformat()
-        })
-    return jsonify(result)
 
+    messages = (
+        session.query(Message, Client)
+        .outerjoin(Client, Message.phone == Client.phone)
+        .order_by(Message.received_at.desc())
+        .all()
+    )
+
+    result = []
+
+    for message, client in messages:
+        result.append({
+            "message_id": message.message_id,
+            "phone": message.phone,
+            "name": client.name if client and client.name else message.phone,
+            "body": message.body,
+            "received_at": message.received_at.isoformat()
+        })
+
+    return jsonify(result)
 # ---------------------------
 # Run
 # ---------------------------
