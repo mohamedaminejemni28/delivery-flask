@@ -96,8 +96,6 @@ def home():
 
 
 
-
-
 @app.route("/sms", methods=["POST"])
 def receive_sms():
 
@@ -124,23 +122,26 @@ def receive_sms():
     status_term = data.get("status", "").strip()
 
     # -------------------------
-    # CASE 1: SMS Transmitter
+    # CASE 1: Custom "key" format
     # -------------------------
 
     if "key" in data:
 
         raw_text = data.get("key", "").strip()
 
+        # Extract phone
         phone_match = re.search(r"De\s*:\s*\+?(\d+)", raw_text)
         if phone_match:
             phone = normalize_phone(phone_match.group(1))
         else:
             phone = "UNKNOWN_" + datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
 
+        # Extract name between ()
         name_match = re.search(r"\((.*?)\)", raw_text)
         if name_match:
             name = name_match.group(1).strip()
 
+        # Extract body
         body_match = re.search(r"\n(.+)", raw_text, re.DOTALL)
         if body_match:
             body = body_match.group(1).strip()
@@ -155,7 +156,16 @@ def receive_sms():
 
         phone = normalize_phone(data.get("From"))
         body = data.get("Body", "").strip()
-        name = None  # IMPORTANT
+
+        # Extract first word as name
+        if body:
+            first_word = body.split()[0]
+            if not first_word.isdigit():
+                name = first_word.capitalize()
+            else:
+                name = None
+        else:
+            name = None
 
     # -------------------------
     # CASE 3: RAW fallback
@@ -200,6 +210,8 @@ def receive_sms():
             return False
         if name.isdigit():
             return False
+        if len(name) < 2:
+            return False
         return True
 
     # -------------------------
@@ -221,7 +233,7 @@ def receive_sms():
         client.status = "red"
         client.last_request_time = datetime.utcnow()
 
-        # 🚫 NEVER override existing real name
+        # Never override existing real name
         if (not client.name or client.name == client.phone) and is_valid_name(name, phone):
             client.name = name
 
@@ -254,12 +266,9 @@ def receive_sms():
     session.add(msg)
     session.commit()
 
-    print("SAVED:", phone, status_term)
+    print("SAVED:", phone, name, status_term)
 
     return "OK", 200
-
-
-
 
 
 
